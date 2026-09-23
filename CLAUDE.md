@@ -7,8 +7,8 @@ Creating 5 dynamic, generative logo options for Processing Community Day, Bangal
 ```
 /1 - Concept 1 (index.html, sketch.js, lib/, reference images) — Blue Pottery Mandala built from rotating pixelated tech-cursor icons (arrow, hand, hourglass, gear, power, wifi, terminal, bolt)
 /2 - Concept 2 (index.html, sketch.js, lib/, reference images) — Trail Type: click-drag paints a non-rotating "PCD / BLR / 2026" band stack that waves vertically along the trail, in a primary-RGB or pastel-harmonious palette
-/3 - Concept 3 (index.html, sketch.js, lib/, reference images) — Letter Wave
-/4 - Concept 4 (index.html, sketch.js, lib/, reference images)
+/3 - Concept 3 (index.html, sketch.js, lib/, reference images) — Letter Wave: "PCD" and "BLR" repeat along curving paths, shrinking and fading as they trail away from a central full-size pair
+/4 - Concept 4 (index.html, sketch.js, lib/, reference images) — Radial Type: a comma-separated word list becomes concentric rings of text (last word innermost), with per-ring start-angle offsets and reading directions
 /5 - Concept 5 (index.html, sketch.js, lib/, reference images) — Type Rotate: "PCD • BLR" fans out clockwise from the center dot as fading, concentric radial trails
 /discarded - Previous attempts (archived)
 ```

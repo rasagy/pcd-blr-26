@@ -24,9 +24,9 @@
 var words = 'Processing, Community, Day, Bengaluru';
 var reverseOrder = false;
 
-var fillMode = ['Auto-fit', 'Repeat'];
-var fitTurns = 0.92, fitTurnsMin = 0.5, fitTurnsMax = 1.5, fitTurnsStep = 0.05;
+var fillMode = ['Once', 'Repeat'];
 var textSizeVal = 28, textSizeValMin = 10, textSizeValMax = 64, textSizeValStep = 1;
+var letterSpacing = 0, letterSpacingMin = -2, letterSpacingMax = 12, letterSpacingStep = 0.5;
 var separator = [' · ', ' — ', '  ', ' • ', ' / '];
 
 var innerRadius = 60, innerRadiusMin = 20, innerRadiusMax = 200, innerRadiusStep = 2;
@@ -35,7 +35,7 @@ var logoSize = 600, logoSizeMin = 300, logoSizeMax = 640, logoSizeStep = 10;
 
 var startAngle = 0, startAngleMin = -180, startAngleMax = 180, startAngleStep = 1;
 var offsetMode = ['Aligned', 'Step', 'Golden', 'Centred', 'Random'];
-var offsetStep = 24, offsetStepMin = 0, offsetStepMax = 180, offsetStepStep = 1;
+var offsetAmount = 24, offsetAmountMin = 0, offsetAmountMax = 180, offsetAmountStep = 1;
 var direction = ['Clockwise', 'Counter-clockwise', 'Alternate', 'Random'];
 
 var fontChoice = ['Anek Latin', 'Space Mono', 'Doto', 'Geist Pixel'];
@@ -55,20 +55,19 @@ var rotationSpeed = 0.2, rotationSpeedMin = 0, rotationSpeedMax = 2, rotationSpe
 var gui; // global so the Randomize callback can reach gui.prototype
 
 var CANVAS_SIZE = 640;
-var PROBE_SIZE = 100;
-var SIZE_MIN = 8, SIZE_MAX = 80;
+var SIZE_MIN = 8, SIZE_MAX = 80; // sanity guard on the textSizeVal slider
 var ringRotation = []; // per-ring accumulated animation angle
 var fontsReady = false;
 
 // every numeric slider, for the Randomize button
 var NUMERIC_CONTROLS = [
-  ['fitTurns', fitTurnsMin, fitTurnsMax, fitTurnsStep],
   ['textSizeVal', textSizeValMin, textSizeValMax, textSizeValStep],
+  ['letterSpacing', letterSpacingMin, letterSpacingMax, letterSpacingStep],
   ['innerRadius', innerRadiusMin, innerRadiusMax, innerRadiusStep],
   ['ringGap', ringGapMin, ringGapMax, ringGapStep],
   ['logoSize', logoSizeMin, logoSizeMax, logoSizeStep],
   ['startAngle', startAngleMin, startAngleMax, startAngleStep],
-  ['offsetStep', offsetStepMin, offsetStepMax, offsetStepStep],
+  ['offsetAmount', offsetAmountMin, offsetAmountMax, offsetAmountStep],
   ['baseHue', baseHueMin, baseHueMax, baseHueStep],
   ['baseSat', baseSatMin, baseSatMax, baseSatStep],
   ['baseBri', baseBriMin, baseBriMax, baseBriStep],
@@ -102,17 +101,17 @@ function setup() {
   gui.prototype.addButton('Randomize', randomizeAll);
   gui.addGlobals(
     'words', 'reverseOrder',
-    'fillMode', 'fitTurns', 'textSizeVal', 'separator',
+    'fillMode', 'textSizeVal', 'letterSpacing', 'separator',
     'innerRadius', 'ringGap', 'logoSize',
-    'startAngle', 'offsetMode', 'offsetStep', 'direction',
+    'startAngle', 'offsetMode', 'offsetAmount', 'direction',
     'fontChoice', 'weightChoice',
     'baseHue', 'baseSat', 'baseBri', 'accentHue', 'accentMode', 'bgTone',
     'seed', 'animate', 'rotationSpeed'
   );
 
   // Gate the first real draw on the four families actually being ready so
-  // textWidth() metrics (used for auto-fit sizing) aren't measured against
-  // a fallback font, which would make the layout jump once fonts land.
+  // textWidth() metrics (used for ring sizing) aren't measured against a
+  // fallback font, which would make the layout jump once fonts land.
   if (document.fonts && document.fonts.ready) {
     document.fonts.ready.then(function () { fontsReady = true; });
   } else {
@@ -132,7 +131,10 @@ function randomizeAll() {
   });
   DROPDOWN_CONTROLS.forEach(function (entry) {
     var name = entry[0], options = entry[1];
-    gui.prototype.setValue(name, options[Math.floor(random(options.length))]);
+    // QuickSettings' dropdown setValue takes the option INDEX (or
+    // {index: n}), not the option string itself — passing the string
+    // straight through indexes `options[str]`, which is undefined.
+    gui.prototype.setValue(name, Math.floor(random(options.length)));
   });
 }
 
@@ -186,56 +188,74 @@ function parseWords(raw) {
 
 // Computes radius + resolved textSize + angular span + per-ring direction
 // + per-ring start angle for every ring, working outward from the centre.
+//
+// Both fill modes take their size straight from the textSizeVal slider, so
+// size no longer depends on radius — the radius/size relationship is a
+// simple forward accumulation, no circular dependency to solve:
+//   r[0] = innerRadius
+//   r[i] = r[i-1] + size[i-1]/2 + size[i]/2 + ringGap
+// Since every ring uses the same size, that's just r[i] = r[i-1] + size + ringGap
+// for i > 0, but written out below in the general form for clarity.
+// Sums per-character textWidth() — matches how drawRing() accumulates
+// angular advance one glyph at a time, which can differ slightly from
+// textWidth() on the whole string (that can include cross-character
+// kerning). Used wherever a width needs to line up exactly with rendering.
+function sumCharWidths(str) {
+  var total = 0;
+  for (var i = 0; i < str.length; i++) total += textWidth(str[i]);
+  return total;
+}
+
 function layoutRings(phrases) {
   var n = phrases.length;
   var rings = [];
-  var prevSize = 0;
-  var r = innerRadius;
+  var size = constrain(textSizeVal, SIZE_MIN, SIZE_MAX);
+  textSize(size);
 
   for (var i = 0; i < n; i++) {
-    if (i > 0) {
-      // accumulate: this ring's radius depends on the previous ring's size
-    }
     var phrase = phrases[i];
-    var size, content, span;
+    var r;
 
-    if (fillMode === 'Auto-fit') {
-      textSize(PROBE_SIZE);
-      var wAtProbe = textWidth(phrase);
-      if (wAtProbe <= 0) wAtProbe = PROBE_SIZE * phrase.length * 0.5;
-      size = (TWO_PI * r * fitTurns) / wAtProbe * PROBE_SIZE;
-      size = constrain(size, SIZE_MIN, SIZE_MAX);
-      content = phrase;
-      textSize(size);
-      span = textWidth(content) / r;
+    if (i === 0) {
+      r = innerRadius;
     } else {
-      size = constrain(textSizeVal, SIZE_MIN, SIZE_MAX);
-      textSize(size);
+      r = rings[i - 1].radius + rings[i - 1].size / 2 + size / 2 + ringGap;
+    }
+
+    var content, span, tracking;
+    if (fillMode === 'Once') {
+      // draw the phrase a single time; it occupies whatever arc it happens
+      // to occupy and does NOT stretch to close the circle.
+      content = phrase;
+      tracking = 0;
+      span = (sumCharWidths(content) + letterSpacing * content.length) / r;
+    } else {
+      // Repeat: the phrase + separator repeats until THIS ring's own
+      // circumference (computed from its own, already-settled radius) is
+      // filled — using a stale radius here was the earlier bug.
+      //
+      // Math.round() on the repeat count either overlaps the seam (rounds
+      // up, content wider than the circumference) or leaves a gap (rounds
+      // down) — neither is correct on its own. Instead: floor the repeat
+      // count (always leaves a gap or exact fit, never an overlap), then
+      // distribute the leftover as extra per-glyph tracking so the ring
+      // closes exactly with no seam collision.
       var unit = phrase + separator;
-      var unitW = textWidth(unit);
+      var unitW = sumCharWidths(unit);
       if (unitW <= 0) unitW = size * unit.length * 0.5;
+      unitW += letterSpacing * unit.length; // account for spacing before sizing the repeat count
       var circumference = TWO_PI * r;
-      var repeats = Math.max(1, Math.round(circumference / unitW));
+      var repeats = Math.max(1, Math.floor(circumference / unitW));
       content = '';
       for (var k = 0; k < repeats; k++) content += unit;
-      span = textWidth(content) / r;
-    }
-
-    if (i > 0) {
-      r = rings[i - 1].radius + rings[i - 1].size / 2 + size / 2 + ringGap;
-      // re-measure at the correct radius for auto-fit (size scales with r)
-      if (fillMode === 'Auto-fit') {
-        textSize(PROBE_SIZE);
-        var wAtProbe2 = textWidth(phrase);
-        if (wAtProbe2 <= 0) wAtProbe2 = PROBE_SIZE * phrase.length * 0.5;
-        size = (TWO_PI * r * fitTurns) / wAtProbe2 * PROBE_SIZE;
-        size = constrain(size, SIZE_MIN, SIZE_MAX);
-        textSize(size);
-        span = textWidth(content) / r;
-      } else {
-        textSize(size);
-        span = textWidth(content) / r;
-      }
+      // Measured as the SUM of per-character widths (not textWidth(content)
+      // as one string) so this matches exactly what drawRing() accumulates
+      // per glyph — a whole-string measurement can differ slightly due to
+      // kerning, which would leave a sub-pixel-to-few-pixel seam error.
+      var contentW = sumCharWidths(content) + letterSpacing * content.length;
+      var slack = circumference - contentW;
+      tracking = content.length > 0 ? slack / content.length : 0;
+      span = TWO_PI; // Repeat rings close exactly by construction
     }
 
     rings.push({
@@ -244,9 +264,9 @@ function layoutRings(phrases) {
       radius: r,
       size: size,
       span: span,
+      tracking: tracking,
       index: i
     });
-    prevSize = size;
   }
 
   return rings;
@@ -266,7 +286,7 @@ function ringStartAngle(ringInfo, i, n) {
   if (offsetMode === 'Aligned') {
     a = base;
   } else if (offsetMode === 'Step') {
-    a = base + i * radians(offsetStep);
+    a = base + i * radians(offsetAmount);
   } else if (offsetMode === 'Golden') {
     a = base + i * radians(137.5);
   } else if (offsetMode === 'Centred') {
@@ -319,7 +339,7 @@ function drawRing(ringInfo, i, n) {
 
   for (var c = 0; c < content.length; c++) {
     var ch = content[c];
-    var w = textWidth(ch);
+    var w = textWidth(ch) + letterSpacing + (ringInfo.tracking || 0);
     var deltaTheta = (w / radius) * travel;
 
     // advance half the char's angular width to place the glyph centre
@@ -327,7 +347,7 @@ function drawRing(ringInfo, i, n) {
 
     push();
     rotate(angle);
-    translate(0, -radius);
+    translate(radius, 0);
     // orient the glyph so its baseline is tangent to the circle; the
     // travel-direction flip also flips the glyph 180 degrees so
     // counter-clockwise rings read right-way-up from the outside (this is
